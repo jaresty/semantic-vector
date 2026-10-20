@@ -36,6 +36,15 @@ deterministic reports.
   conditional on every retained dependency and captured value.
 - V1 rejects v0 on new identity/execution paths. Dedicated golden-tested helpers
   preserve historical v0 identity and structured-report encoding only.
+- Additive `semantic-vector-batch/v1` preflights and sorts immutable mutation IDs
+  before executable closures, snapshots one shared valid world plus independently
+  authored property/mutation/violating semantics, executes valid once and each
+  mutation once, and preserves `RunContrast`-equivalent per-row reports. Shared
+  observation is admitted only with an adapter-bound caller declaration labeled
+  `DECLARED_UNVERIFIED`; no purity, replay, reentrancy, or custody claim is verified.
+  Compact bytes are strict summaries with explicit omissions, not complete reports
+  or oracle authority; parsing establishes semantic shape, while relational binding
+  requires `VerifyCompactBatch` against canonical full-result bytes.
 
 The following remain explicitly deferred and are not implied by the v1 API:
 fixture generators; JSON fixture transport or public canonical schemas; a
