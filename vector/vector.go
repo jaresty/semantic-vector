@@ -16,9 +16,16 @@ import (
 	"strings"
 )
 
-const Version = "semantic-vector/v0"
+const (
+	VersionV0 = "semantic-vector/v0"
+	VersionV1 = "semantic-vector/v1"
+	Version   = VersionV1
+)
 
-var ErrValidation = errors.New("semantic vector validation failed")
+var (
+	ErrValidation    = errors.New("semantic vector validation failed")
+	ErrLegacyVersion = errors.New("semantic-vector/v0 requires explicit legacy handling")
+)
 
 type Code string
 
@@ -34,6 +41,7 @@ const (
 	CodeMismatch          Code = "MISMATCH"
 	CodeOracleUnqualified Code = "ORACLE_UNQUALIFIED"
 	CodeNondiscriminating Code = "NONDISCRIMINATING"
+	CodeMatcherPanic      Code = "MATCHER_PANIC"
 )
 
 type Issue struct {
@@ -61,14 +69,57 @@ const (
 	Unknown               Independence = "unknown"
 )
 
+type VerificationStatus string
+
+const (
+	VerificationUnverified            VerificationStatus = "UNVERIFIED"
+	VerificationIndependentlyReviewed VerificationStatus = "INDEPENDENTLY_REVIEWED"
+)
+
+type ReviewEvidence struct {
+	Reviewer string `json:"reviewer"`
+	Scope    string `json:"scope"`
+	Source   string `json:"source"`
+	Revision string `json:"revision"`
+}
+
+type Verification struct {
+	Status   VerificationStatus `json:"status"`
+	Evidence []ReviewEvidence   `json:"evidence"`
+}
+
 type Oracle struct {
 	Kind, Source, Revision, Producer, Method, Review string
 	Independence                                     Independence
+	Verification                                     Verification
 }
 
-func (o Oracle) Qualified() bool {
-	return o.Independence == Independent || o.Independence == Diverse || o.Independence == Reference
+func (o Oracle) VerificationStatus() VerificationStatus {
+	if o.Verification.Status == VerificationIndependentlyReviewed {
+		return VerificationIndependentlyReviewed
+	}
+	return VerificationUnverified
 }
+
+func (o Oracle) IndependentlyReviewed() bool {
+	if o.VerificationStatus() != VerificationIndependentlyReviewed || o.Independence == ImplementationDerived || o.Independence == GeneratorDependent || o.Independence == Unknown {
+		return false
+	}
+	if len(o.Verification.Evidence) == 0 {
+		return false
+	}
+	for _, e := range o.Verification.Evidence {
+		if e.Reviewer == "" || e.Scope == "" || e.Source == "" || e.Revision == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// Qualified is retained for source compatibility. It is conservative: legacy
+// declaration strings and independence labels never imply independent review.
+// Deprecated: use IndependentlyReviewed and inspect Verification evidence.
+func (o Oracle) Qualified() bool { return o.IndependentlyReviewed() }
 
 type EvidenceCeiling struct {
 	Version         string
@@ -88,13 +139,25 @@ type Effects[E any] struct {
 	Known  bool
 	Values []E
 }
+
+// NoEffects explicitly asserts that the expected effect list is empty. A zero
+// Effects value means omitted or unknown and fails validation.
+func NoEffects[E any]() Effects[E] { return Effects[E]{Known: true, Values: []E{}} }
+
+type FailureExpectation struct {
+	Class        string  `json:"class,omitempty"`
+	ExactMessage *string `json:"exact_message,omitempty"`
+	MatcherKey   string  `json:"matcher_key,omitempty"`
+}
+
 type CanonicalExpectation struct{ Output, Failure, Effects []byte }
 type Expectation[O, F, E any] struct {
-	Output         O
-	Failure        F
-	Effects        Effects[E]
-	Classification string
-	Canonical      CanonicalExpectation
+	Output             O
+	Failure            F
+	Effects            Effects[E]
+	Classification     string
+	Canonical          CanonicalExpectation
+	FailureExpectation FailureExpectation
 }
 type WholeWorldDifference struct{ BeforeDigest, AfterDigest string }
 type Perturbation[I any] struct {
@@ -102,6 +165,17 @@ type Perturbation[I any] struct {
 	Difference WholeWorldDifference
 	Apply      func(I) (I, error)
 }
+
+// ExecutableCustody declares stable identities for trusted executable
+// dependencies retained by a FrozenDataSnapshot. Functions and interface
+// implementations are not made immutable by snapshotting canonical data.
+type ExecutableCustody struct {
+	CodecKey             string `json:"codec_key"`
+	ObservationCodecKey  string `json:"observation_codec_key"`
+	PerturbationKey      string `json:"perturbation_key"`
+	ClosureStateRetained bool   `json:"closure_state_retained"`
+}
+
 type Vector[I, O, F, E any] struct {
 	Version, ID, Label               string
 	Property                         Property
@@ -110,6 +184,7 @@ type Vector[I, O, F, E any] struct {
 	ObservationCodec                 ObservationCodec[O, F, E]
 	Valid                            World[I]
 	Perturbation                     Perturbation[I]
+	Executables                      ExecutableCustody
 	ExpectedValid, ExpectedViolating Expectation[O, F, E]
 	EvidenceCeiling                  EvidenceCeiling
 }
@@ -153,16 +228,59 @@ const (
 	ContrastInvalid     Contrast = "INVALID"
 )
 
+type Attribution string
+
+const (
+	AttributionUnresolved           Attribution = "UNRESOLVED"
+	AttributionImplementationDefect Attribution = "IMPLEMENTATION_DEFECT"
+	AttributionTestDefinitionDefect Attribution = "TEST_DEFINITION_DEFECT"
+)
+
+type ReportClassification struct {
+	ExpectationMismatch  bool        `json:"expectation_mismatch"`
+	ExecutionFailure     bool        `json:"execution_failure"`
+	TestDefinitionDefect bool        `json:"test_definition_defect"`
+	Discrimination       Contrast    `json:"discrimination"`
+	Attribution          Attribution `json:"attribution"`
+}
+
+type AttributionClaimStatus string
+
+const AttributionClaimDeclaredUnverified AttributionClaimStatus = "DECLARED_UNVERIFIED"
+
+type AttributionClaim struct {
+	ClaimedAttribution Attribution            `json:"claimed_attribution"`
+	Status             AttributionClaimStatus `json:"status"`
+	DeclaredEvidence   []string               `json:"declared_evidence"`
+}
+
+// Adjudication is retained only as input to the deprecated Adjudicate wrapper.
+// Its strings do not establish review, verification, or authority.
+// Deprecated: use DeclareAttribution.
+type Adjudication struct {
+	Attribution Attribution      `json:"attribution"`
+	Evidence    []ReviewEvidence `json:"evidence"`
+}
+
+type BindingCustody struct {
+	AdapterKey    string `json:"adapter_key"`
+	ClassifierKey string `json:"classifier_key"`
+	Compatibility bool   `json:"compatibility_binding"`
+}
+
 type Report struct {
 	Version, VectorID, PropertyID string
 	Status                        Status
 	Valid, Violating              WorldResult
 	Contrast                      Contrast
+	Classification                ReportClassification
 	Oracle                        Oracle
 	OracleQualified               bool
 	EvidenceCeiling               EvidenceCeiling
 	Findings                      []Finding
 	ReproductionID                string
+	AttributionClaim              *AttributionClaim
+	Binding                       BindingCustody
 	limits                        Limits
 }
 type Runner[I, O, F, E any] struct {
@@ -234,7 +352,10 @@ func (r Runner[I, O, F, E]) prepare(v Vector[I, O, F, E]) (prepared, error) {
 	var p prepared
 	l := r.limits()
 	missing := func(surface, detail string) error { return Issue{Code: CodeMissing, Surface: surface, Detail: detail} }
-	if v.Version != Version {
+	if v.Version == VersionV0 {
+		return p, errors.Join(ErrLegacyVersion, Issue{Code: CodeInvalid, Surface: "version", Detail: "v0 cannot be interpreted by the v1 canonical path"})
+	}
+	if v.Version != VersionV1 {
 		return p, Issue{Code: CodeInvalid, Surface: "version", Detail: "unsupported version"}
 	}
 	if v.Property.ID == "" || v.Property.Statement == "" || v.Property.Source == "" {
@@ -256,6 +377,9 @@ func (r Runner[I, O, F, E]) prepare(v Vector[I, O, F, E]) (prepared, error) {
 	}
 	if v.Perturbation.ID == "" || v.Perturbation.Apply == nil {
 		return p, missing("perturbation", "id and mutator required")
+	}
+	if v.Executables.CodecKey == "" || v.Executables.ObservationCodecKey == "" || v.Executables.PerturbationKey == "" || !v.Executables.ClosureStateRetained {
+		return p, missing("executables", "stable codec, observation codec, perturbation keys and retained-closure acknowledgement required")
 	}
 	if len(v.Valid.Canonical) == 0 || len(v.Valid.Canonical) > l.MaxCanonicalBytes {
 		return p, Issue{Code: CodeOverflow, World: "valid", Surface: "canonical", Detail: "canonical world absent or over limit"}
@@ -312,8 +436,10 @@ func (r Runner[I, O, F, E]) prepare(v Vector[I, O, F, E]) (prepared, error) {
 		PerturbationID   string
 		Difference       WholeWorldDifference
 		EV, EX           CanonicalExpectation
+		FV, FX           FailureExpectation
+		Executables      ExecutableCustody
 		Ceiling          EvidenceCeiling
-	}{v.Version, v.Property, v.Oracle, v.Valid.Canonical, violatingBytes, v.Perturbation.ID, v.Perturbation.Difference, cev, cex, v.EvidenceCeiling}
+	}{v.Version, v.Property, v.Oracle, v.Valid.Canonical, violatingBytes, v.Perturbation.ID, v.Perturbation.Difference, cev, cex, v.ExpectedValid.FailureExpectation, v.ExpectedViolating.FailureExpectation, v.Executables, v.EvidenceCeiling}
 	mb, e := json.Marshal(meta)
 	if e != nil {
 		return p, e
@@ -436,12 +562,41 @@ func (r Runner[I, O, F, E]) executeWorld(ctx context.Context, v Vector[I, O, F, 
 	return compare(world, encoded, encodedExpected, classification, expected.Classification), nil
 }
 
-func (r Runner[I, O, F, E]) Run(ctx context.Context, v Vector[I, O, F, E]) Report {
-	l := r.limits()
-	rep := Report{Version: Version, VectorID: v.ID, PropertyID: v.Property.ID, Status: Failed, Contrast: ContrastInvalid, Oracle: v.Oracle, OracleQualified: v.Oracle.Qualified(), EvidenceCeiling: v.EvidenceCeiling, limits: l}
+func newReport[I, O, F, E any](v Vector[I, O, F, E], l Limits) Report {
+	rep := Report{Version: v.Version, VectorID: v.ID, PropertyID: v.Property.ID, Status: Failed, Contrast: ContrastInvalid, Oracle: v.Oracle, OracleQualified: v.Oracle.IndependentlyReviewed(), EvidenceCeiling: v.EvidenceCeiling, limits: l}
 	if !rep.OracleQualified {
-		rep.Findings = append(rep.Findings, Finding{Code: CodeOracleUnqualified, Surface: "oracle.independence", Detail: "oracle cannot establish independent conformance"})
+		rep.Findings = append(rep.Findings, Finding{Code: CodeOracleUnqualified, Surface: "oracle.verification", Detail: "oracle is unverified; declarations do not establish independent review"})
 	}
+	return rep
+}
+
+func finishReport(rep Report) Report {
+	rep.Classification.Discrimination = rep.Contrast
+	rep.Classification.Attribution = AttributionUnresolved
+	for _, f := range rep.Findings {
+		switch f.Code {
+		case CodeMismatch:
+			rep.Classification.ExpectationMismatch = true
+		case CodeAdapter, CodeClassifier, CodeMatcherPanic:
+			rep.Classification.ExecutionFailure = true
+		case CodeMissing, CodeInvalid, CodeUnsupported, CodeUnstableEncoding, CodeOverflow, CodeApply:
+			rep.Classification.TestDefinitionDefect = true
+		}
+	}
+	if len(rep.Findings) == 0 {
+		rep.Status = Pass
+	} else {
+		rep.Status = Failed
+	}
+	return rep
+}
+
+// Run is the compatibility entry point. New code should Freeze first and Bind
+// the resulting immutable specification to an adapter.
+func (r Runner[I, O, F, E]) Run(ctx context.Context, v Vector[I, O, F, E]) (rep Report) {
+	l := r.limits()
+	rep = newReport(v, l)
+	defer func() { rep = finishReport(rep) }()
 	if r.Adapter == nil {
 		rep.Findings = append(rep.Findings, Finding{Code: CodeMissing, Surface: "adapter", Detail: "adapter required"})
 		return rep
@@ -490,23 +645,56 @@ func (r Runner[I, O, F, E]) Run(ctx context.Context, v Vector[I, O, F, E]) Repor
 	} else {
 		rep.Contrast = ContrastInvalid
 	}
-	if len(rep.Findings) == 0 {
-		rep.Status = Pass
-	}
 	return rep
 }
+func DeclareAttribution(rep Report, claimed Attribution, declaredEvidence ...string) (Report, error) {
+	if claimed != AttributionImplementationDefect && claimed != AttributionTestDefinitionDefect {
+		return rep, Issue{Code: CodeInvalid, Surface: "attribution_claim.claimed_attribution", Detail: "implementation or test-definition claim required"}
+	}
+	if len(declaredEvidence) == 0 {
+		return rep, Issue{Code: CodeMissing, Surface: "attribution_claim.declared_evidence", Detail: "at least one caller declaration required"}
+	}
+	for _, evidence := range declaredEvidence {
+		if strings.TrimSpace(evidence) == "" {
+			return rep, Issue{Code: CodeMissing, Surface: "attribution_claim.declared_evidence", Detail: "empty caller declaration rejected"}
+		}
+	}
+	claim := AttributionClaim{ClaimedAttribution: claimed, Status: AttributionClaimDeclaredUnverified, DeclaredEvidence: append([]string(nil), declaredEvidence...)}
+	rep.AttributionClaim = &claim
+	// Classification.Attribution intentionally remains authoritative UNRESOLVED.
+	return rep, nil
+}
+
+// Adjudicate retains source compatibility but records only a caller-declared,
+// unverified claim. String fields never establish independent review.
+// Deprecated: use DeclareAttribution.
+func Adjudicate(rep Report, adjudication Adjudication) (Report, error) {
+	declared := make([]string, 0, len(adjudication.Evidence))
+	for _, evidence := range adjudication.Evidence {
+		encoded, err := json.Marshal(evidence)
+		if err != nil {
+			return rep, err
+		}
+		declared = append(declared, string(encoded))
+	}
+	return DeclareAttribution(rep, adjudication.Attribution, declared...)
+}
+
 func (r Report) dto() any {
 	return struct {
 		Version, VectorID, PropertyID string
 		Status                        Status
 		Valid, Violating              WorldResult
 		Contrast                      Contrast
+		Classification                ReportClassification
 		Oracle                        Oracle
 		OracleQualified               bool
 		EvidenceCeiling               EvidenceCeiling
 		Findings                      []Finding
 		ReproductionID                string
-	}{r.Version, r.VectorID, r.PropertyID, r.Status, r.Valid, r.Violating, r.Contrast, r.Oracle, r.OracleQualified, r.EvidenceCeiling, r.Findings, r.ReproductionID}
+		AttributionClaim              *AttributionClaim
+		Binding                       BindingCustody
+	}{r.Version, r.VectorID, r.PropertyID, r.Status, r.Valid, r.Violating, r.Contrast, r.Classification, r.Oracle, r.OracleQualified, r.EvidenceCeiling, r.Findings, r.ReproductionID, r.AttributionClaim, r.Binding}
 }
 func (r Report) Structured() ([]byte, error) {
 	b, e := json.Marshal(r.dto())
@@ -524,7 +712,11 @@ func (r Report) Structured() ([]byte, error) {
 }
 func (r Report) Human() (string, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s vector %s\nproperty: %s\nstatus: %s\ncontrast: %s\noracle-qualified: %t\n", r.Version, r.VectorID, r.PropertyID, r.Status, r.Contrast, r.OracleQualified)
+	fmt.Fprintf(&b, "%s vector %s\nproperty: %s\nstatus: %s\ncontrast: %s\noracle-verification: %s\nindependently-reviewed: %t\n", r.Version, r.VectorID, r.PropertyID, r.Status, r.Contrast, r.Oracle.VerificationStatus(), r.OracleQualified)
+	fmt.Fprintf(&b, "expectation-mismatch: %t\nexecution-failure: %t\ntest-definition-defect: %t\ndiscrimination: %s\nattribution: %s\n", r.Classification.ExpectationMismatch, r.Classification.ExecutionFailure, r.Classification.TestDefinitionDefect, r.Classification.Discrimination, r.Classification.Attribution)
+	if r.AttributionClaim != nil {
+		fmt.Fprintf(&b, "attribution-claim: %s (%s)\n", r.AttributionClaim.ClaimedAttribution, r.AttributionClaim.Status)
+	}
 	fmt.Fprintf(&b, "evidence ceiling: %s\nreplay: %s\n", strings.Join(r.EvidenceCeiling.CannotEstablish, ", "), r.ReproductionID)
 	for _, f := range r.Findings {
 		fmt.Fprintf(&b, "- %s %s %s: %s", f.Code, f.World, f.Surface, f.Detail)

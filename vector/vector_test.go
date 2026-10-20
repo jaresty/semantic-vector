@@ -84,7 +84,7 @@ func expectation(t *testing.T, c *obsCodec, o, f, class string, effects []string
 	ob, _ := c.EncodeOutput(o)
 	fb, _ := c.EncodeFailure(f)
 	eb, _ := c.EncodeEffects(normalized(effects))
-	return Expectation[string, string, string]{o, f, Effects[string]{true, effects}, class, CanonicalExpectation{ob, fb, eb}}
+	return Expectation[string, string, string]{Output: o, Failure: f, Effects: Effects[string]{Known: true, Values: effects}, Classification: class, Canonical: CanonicalExpectation{Output: ob, Failure: fb, Effects: eb}}
 }
 func base(t *testing.T) (Vector[input, string, string, string], *obsCodec) {
 	t.Helper()
@@ -92,9 +92,13 @@ func base(t *testing.T) (Vector[input, string, string, string], *obsCodec) {
 	valid := input{true, []string{"original"}}
 	bad := input{false, []string{"original"}}
 	vb, bb := canon(t, valid), canon(t, bad)
-	v := Vector[input, string, string, string]{Version: Version, Property: Property{"allow", "allowed requests succeed", "contract", "1"}, Oracle: Oracle{"reference", "contract", "1", "reviewer", "manual", "reviewed", Independent}, Codec: jsonCodec[input]{}, ObservationCodec: c, Valid: World[input]{vb}, Perturbation: Perturbation[input]{"deny", WholeWorldDifference{digest(vb), digest(bb)}, func(i input) (input, error) { i.Allowed = false; return i, nil }}, ExpectedValid: expectation(t, c, "ok", "", "allowed", []string{"write"}), ExpectedViolating: expectation(t, c, "", "denied", "denied", nil), EvidenceCeiling: EvidenceCeiling{"v0", []string{"semantic completeness"}}}
+	v := Vector[input, string, string, string]{Version: Version, Property: Property{"allow", "allowed requests succeed", "contract", "1"}, Oracle: Oracle{Kind: "reference", Source: "contract", Revision: "1", Producer: "author", Method: "manual", Review: "legacy display", Independence: Independent, Verification: reviewedEvidence()}, Codec: jsonCodec[input]{}, ObservationCodec: c, Valid: World[input]{vb}, Perturbation: Perturbation[input]{"deny", WholeWorldDifference{digest(vb), digest(bb)}, func(i input) (input, error) { i.Allowed = false; return i, nil }}, Executables: testExecutableCustody(), ExpectedValid: expectation(t, c, "ok", "", "allowed", []string{"write"}), ExpectedViolating: expectation(t, c, "", "denied", "denied", nil), EvidenceCeiling: EvidenceCeiling{"v0", []string{"semantic completeness"}}}
 	return v, c
 }
+func testExecutableCustody() ExecutableCustody {
+	return ExecutableCustody{CodecKey: "json-input/v1", ObservationCodecKey: "json-observation/v1", PerturbationKey: "deny/v1", ClosureStateRetained: true}
+}
+
 func run(t *testing.T, v Vector[input, string, string, string], a *adapter, class Classifier[string, string, string]) Report {
 	t.Helper()
 	return Runner[input, string, string, string]{a, class, DefaultLimits()}.Run(context.Background(), v)
@@ -283,7 +287,7 @@ func TestReportRenderingDoesNotInvokeDomainFormatters(t *testing.T) {
 	bad := input{Allowed: false}
 	vb, bb := canon(t, valid), canon(t, bad)
 	zero := canon(t, []string{})
-	v := Vector[input, hostile, string, string]{Version: Version, Property: Property{"p", "statement", "source", ""}, Oracle: Oracle{"reference", "source", "1", "reviewer", "manual", "reviewed", Reference}, Codec: jsonCodec[input]{}, ObservationCodec: hostileCodec{}, Valid: World[input]{vb}, Perturbation: Perturbation[input]{"change", WholeWorldDifference{digest(vb), digest(bb)}, func(i input) (input, error) { i.Allowed = false; return i, nil }}, ExpectedValid: Expectation[hostile, string, string]{hostile("ok"), "", Effects[string]{true, []string{}}, "allowed", CanonicalExpectation{[]byte("ok"), []byte{}, zero}}, ExpectedViolating: Expectation[hostile, string, string]{hostile("bad"), "denied", Effects[string]{true, []string{}}, "denied", CanonicalExpectation{[]byte("bad"), []byte("denied"), zero}}, EvidenceCeiling: EvidenceCeiling{"v0", []string{"authority"}}}
+	v := Vector[input, hostile, string, string]{Version: Version, Property: Property{"p", "statement", "source", ""}, Oracle: Oracle{Kind: "reference", Source: "source", Revision: "1", Producer: "author", Method: "manual", Review: "legacy display", Independence: Reference, Verification: reviewedEvidence()}, Codec: jsonCodec[input]{}, ObservationCodec: hostileCodec{}, Valid: World[input]{vb}, Perturbation: Perturbation[input]{"change", WholeWorldDifference{digest(vb), digest(bb)}, func(i input) (input, error) { i.Allowed = false; return i, nil }}, Executables: testExecutableCustody(), ExpectedValid: Expectation[hostile, string, string]{Output: hostile("ok"), Effects: NoEffects[string](), Classification: "allowed", Canonical: CanonicalExpectation{Output: []byte("ok"), Failure: []byte{}, Effects: zero}}, ExpectedViolating: Expectation[hostile, string, string]{Output: hostile("bad"), Failure: "denied", Effects: NoEffects[string](), Classification: "denied", Canonical: CanonicalExpectation{Output: []byte("bad"), Failure: []byte("denied"), Effects: zero}}, EvidenceCeiling: EvidenceCeiling{"v0", []string{"authority"}}}
 	classify := func(o Observation[hostile, string, string]) (string, error) {
 		if o.Failure != "" {
 			return "denied", nil
@@ -334,7 +338,7 @@ func TestCachedPointerCodecCannotCorruptValidExecution(t *testing.T) {
 	valid := &input{Allowed: true}
 	bad := &input{Allowed: false}
 	vb, bb := canon(t, valid), canon(t, bad)
-	v := Vector[*input, string, string, string]{Version: Version, Property: Property{"p", "statement", "source", ""}, Oracle: Oracle{"reference", "source", "1", "reviewer", "manual", "reviewed", Reference}, Codec: codec, ObservationCodec: observations, Valid: World[*input]{vb}, Perturbation: Perturbation[*input]{"deny", WholeWorldDifference{digest(vb), digest(bb)}, func(i *input) (*input, error) { i.Allowed = false; return i, nil }}, ExpectedValid: expectation(t, observations, "ok", "", "allowed", []string{"write"}), ExpectedViolating: expectation(t, observations, "", "denied", "denied", nil), EvidenceCeiling: EvidenceCeiling{"v0", []string{"authority"}}}
+	v := Vector[*input, string, string, string]{Version: Version, Property: Property{"p", "statement", "source", ""}, Oracle: Oracle{Kind: "reference", Source: "source", Revision: "1", Producer: "author", Method: "manual", Review: "legacy display", Independence: Reference, Verification: reviewedEvidence()}, Codec: codec, ObservationCodec: observations, Valid: World[*input]{vb}, Perturbation: Perturbation[*input]{"deny", WholeWorldDifference{digest(vb), digest(bb)}, func(i *input) (*input, error) { i.Allowed = false; return i, nil }}, Executables: testExecutableCustody(), ExpectedValid: expectation(t, observations, "ok", "", "allowed", []string{"write"}), ExpectedViolating: expectation(t, observations, "", "denied", "denied", nil), EvidenceCeiling: EvidenceCeiling{"v0", []string{"authority"}}}
 	classify := func(o Observation[string, string, string]) (string, error) {
 		if o.Failure != "" {
 			return "denied", nil

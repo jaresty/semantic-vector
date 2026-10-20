@@ -46,14 +46,20 @@ func ExampleRunner() {
 	failDenied, _ := json.Marshal("forbidden")
 	create, _ := json.Marshal([]string{"create"})
 	zero, _ := json.Marshal([]string{})
-	v := vector.Vector[request, string, string, string]{Version: vector.Version, Property: vector.Property{ID: "authorization", Statement: "unauthorized requests are refused", Source: "contract"}, Oracle: vector.Oracle{Kind: "reference", Source: "contract", Revision: "1", Producer: "reviewer", Method: "manual", Review: "reviewed", Independence: vector.Reference}, Codec: codec[request]{}, ObservationCodec: observations{}, Valid: vector.World[request]{Canonical: valid}, Perturbation: vector.Perturbation[request]{ID: "remove-authorization", Difference: vector.WholeWorldDifference{BeforeDigest: hash(valid), AfterDigest: hash(violating)}, Apply: func(r request) (request, error) { r.Authorized = false; return r, nil }}, ExpectedValid: vector.Expectation[string, string, string]{Output: "created", Effects: vector.Effects[string]{Known: true, Values: []string{"create"}}, Classification: "allowed", Canonical: vector.CanonicalExpectation{Output: outOK, Failure: failZero, Effects: create}}, ExpectedViolating: vector.Expectation[string, string, string]{Failure: "forbidden", Effects: vector.Effects[string]{Known: true, Values: []string{}}, Classification: "denied", Canonical: vector.CanonicalExpectation{Output: outZero, Failure: failDenied, Effects: zero}}, EvidenceCeiling: vector.EvidenceCeiling{Version: "v0", CannotEstablish: []string{"all authorization behavior"}}}
+	v := vector.Vector[request, string, string, string]{Version: vector.Version, Property: vector.Property{ID: "authorization", Statement: "unauthorized requests are refused", Source: "contract"}, Oracle: vector.Oracle{Kind: "reference", Source: "contract", Revision: "1", Producer: "author", Method: "manual", Review: "see verification evidence", Independence: vector.Reference, Verification: vector.Verification{Status: vector.VerificationIndependentlyReviewed, Evidence: []vector.ReviewEvidence{{Reviewer: "reviewer", Scope: "these two declared worlds", Source: "review/17", Revision: "abc"}}}}, Codec: codec[request]{}, ObservationCodec: observations{}, Valid: vector.World[request]{Canonical: valid}, Perturbation: vector.Perturbation[request]{ID: "remove-authorization", Difference: vector.WholeWorldDifference{BeforeDigest: hash(valid), AfterDigest: hash(violating)}, Apply: func(r request) (request, error) { r.Authorized = false; return r, nil }}, Executables: vector.ExecutableCustody{CodecKey: "request-json/v1", ObservationCodecKey: "access-observation-json/v1", PerturbationKey: "remove-authorization/v1", ClosureStateRetained: true}, ExpectedValid: vector.Expectation[string, string, string]{Output: "created", Effects: vector.Effects[string]{Known: true, Values: []string{"create"}}, Classification: "allowed", Canonical: vector.CanonicalExpectation{Output: outOK, Failure: failZero, Effects: create}}, ExpectedViolating: vector.Expectation[string, string, string]{Failure: "forbidden", Effects: vector.NoEffects[string](), Classification: "denied", Canonical: vector.CanonicalExpectation{Output: outZero, Failure: failDenied, Effects: zero}}, EvidenceCeiling: vector.EvidenceCeiling{Version: "v0", CannotEstablish: []string{"all authorization behavior"}}}
 	classify := func(o vector.Observation[string, string, string]) (string, error) {
 		if o.Failure != "" {
 			return "denied", nil
 		}
 		return "allowed", nil
 	}
-	r := vector.Runner[request, string, string, string]{Adapter: access{}, Classify: classify, Limits: vector.DefaultLimits()}.Run(context.Background(), v)
-	fmt.Println(r.Status, r.Contrast, r.OracleQualified)
-	// Output: PASS ESTABLISHED true
+	r, err := vector.RunContrast(context.Background(), vector.ContrastRun[request, string, string, string]{
+		Vector: v, AdapterKey: "adapter/access/v1", Adapter: access{}, ClassifierKey: "classifier/access/v1", Classify: classify,
+	})
+	if err != nil {
+		fmt.Println("contrast failed")
+		return
+	}
+	fmt.Println(r.Status, r.Contrast, r.Oracle.VerificationStatus(), r.OracleQualified)
+	// Output: PASS ESTABLISHED INDEPENDENTLY_REVIEWED true
 }

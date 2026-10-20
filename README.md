@@ -12,13 +12,14 @@ A semantic vector binds:
 - explicit expected effects and prohibited effects;
 - oracle provenance and evidence ceiling.
 
-The project now contains a narrow, functional **v0 in-memory library**. It is not yet suitable for production use; fixture transport, resource limits, completeness manifests, concurrency helpers, and integrations remain deferred.
+The project now contains a narrow, functional **v1 in-memory library** plus explicit v0 identity/report compatibility encoders. It is not yet suitable for production use; fixture transport, resource limits, completeness manifests, concurrency helpers, and integrations remain deferred.
 
 ## Status
 
 - Product requirements: [`docs/PRD.md`](docs/PRD.md)
 - API package: [`vector`](vector)
 - Implemented scope: [`docs/SCOPE.md`](docs/SCOPE.md)
+- Migration notes: [`docs/MIGRATION.md`](docs/MIGRATION.md)
 - `lsp-trace` adoption: deferred, absent, and separately gated
 
 ## Design principle
@@ -31,7 +32,9 @@ The project now contains a narrow, functional **v0 in-memory library**. It is no
 go test ./...
 ```
 
-The v0 package validates and executes codec-backed in-memory vectors. It supports verified whole-world differences, independently decoded worlds, explicit contrast classifications, non-masking custody findings, and bounded deterministic reports. Its reports remain bounded test evidence and do not establish product acceptance or semantic completeness.
+The package validates and snapshots canonical data before adapters can be bound. `semantic-vector/v1` supports verified whole-world differences, independently decoded worlds, declared-versus-reviewed provenance, executable custody keys, typed failure matchers with matcher-panic containment, explicit `NoEffects`, one-call or staged two-world contrasts, observation-only result classification, and bounded deterministic reports.
+
+A data snapshot does not freeze retained codec, perturbation, matcher, adapter, or classifier closures. Their trust and concurrency safety remain caller responsibilities. Only failure-matcher panic is contained; other executable panics propagate by policy. The library records claims and bounded review evidence; it cannot authenticate custody keys or prove author independence, reviewer identity, domain truth, causal defect ownership, product acceptance, or semantic completeness. Authoritative attribution stays unresolved; optional caller claims are explicitly declared-unverified. V1 rejects v0 on new execution and identity paths; explicit golden-tested legacy helpers preserve only historical v0 identity and report encoding.
 
 ## License
 
