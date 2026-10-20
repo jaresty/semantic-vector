@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jaresty/semantic-vector/observation"
 	"github.com/jaresty/semantic-vector/vector"
 )
 
@@ -260,6 +261,19 @@ func TestEqualAndUncontrolledWorldDefinitionsAreRefused(t *testing.T) {
 				t.Fatalf("err=%v calls=%d", err, len(adapter.calls))
 			}
 		})
+	}
+}
+
+func TestExternalObservedRowCopiesCallerBytesWithoutExecution(t *testing.T) {
+	input := []byte(`{"allowed":false}`)
+	valid := observation.ObservedOutcome{Output: []byte(`"ok"`), FailureClass: []byte(`""`), Effects: []byte(`[]`)}
+	violating := observation.ObservedOutcome{Output: []byte(`""`), FailureClass: []byte(`"denied"`), Effects: []byte(`[]`)}
+
+	row := ExternalObservedRow("deny", input, valid, violating, "sha256:receipt", "ordinary test")
+	input[0], valid.Output[0], violating.FailureClass[0] = 'x', 'x', 'x'
+
+	if string(row.ViolatingInput) != `{"allowed":false}` || string(row.Valid.Output) != `"ok"` || string(row.Violating.FailureClass) != `"denied"` {
+		t.Fatalf("helper retained caller aliases: %#v", row)
 	}
 }
 

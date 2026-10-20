@@ -36,6 +36,14 @@ The package validates and snapshots canonical data before adapters can be bound.
 
 The additive `semantic-vector-batch/v1` API freezes one shared valid world plus a bounded nonempty set of independently authored controlled mutations, preflights and sorts immutable mutation IDs before invoking executable closures, executes the valid world once and each violating world once, and returns one shared valid result plus `RunContrast`-equivalent per-mutation reports retaining each authored property and violating expectation. `BatchPlan` keeps shared semantic declarations explicit, while its template shares only codec/observation-codec custody and adapter/classifier binding; every row explicitly carries property, mutation, stable perturbation key, violating outcome, and effects. Shared valid observation requires an adapter-bound `DECLARED_UNVERIFIED` reuse declaration; it records caller assumptions about scope, purity, replay, and reentrancy but does not verify them. Compact reports are strict canonical summaries with explicit omissions, not complete reports; use `VerifyCompactBatch` rather than parsing alone to establish their binding to canonical full-result bytes.
 
+## Observation sidecar
+
+[`observation`](observation) is an additive, non-executing sidecar for assessing caller-supplied outcomes against a frozen `semantic-vector-observation/v1` specification. It has no adapter or mutation execution path. Reports always retain external execution custody, `NOT_OBSERVED` causal execution, authority `0`, and `accepted=false`; a matching classification establishes only that canonically bound supplied outcomes match the qualified specification and discriminate its worlds.
+
+`ParseReportSyntax` validates strict canonical report syntax but returns no semantic report. `VerifyReport` is the bound acceptance path: it recomputes the complete report from the frozen specification and raw external observation and requires exact canonical equality. Controlled differences remain `DECLARED_UNVERIFIED`; verified byte spans establish only the byte-difference witness, not the declared semantic property. Limits, checked work, panic containment, and defensive copies bound qualification and assessment.
+
+`svtest.ExternalObservedRow` is a test helper that only deep-copies outcomes already produced by ordinary test code. It does not execute, encode, classify, qualify, or authenticate them.
+
 ## Test matrix helper
 
 [`svtest`](svtest) is a thin test-only-by-contract package over `BatchPlan`. A test configures one reviewed `svtest.Contract`, declares typed `Reject` or explicitly no-effects `RejectNoEffects` rows, and calls `svtest.CheckMatrix`. The helper executes one batch, then opens stable named Go subtests only to report retained row comparisons; it never reruns rows to create subtest scope.

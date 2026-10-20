@@ -321,6 +321,8 @@ The exact implemented boundary and intentional narrowing are maintained in [`SCO
 
 The broader product model in this draft remains future work. Fixture generators, fixture transport and public canonical schemas, completeness manifests, a general resource-limit framework, generic concurrency scheduling and CAS support, and integrations are not implemented by v1. Future API additions such as vector packs must not be inferred from the current package.
 
+An additive `semantic-vector-observation/v1` sidecar qualifies frozen specifications and assesses caller-supplied observations without an adapter, mutation application, or execution claim. Its reports preserve external custody, `NOT_OBSERVED` causal execution, zero authority, and `accepted=false`. Strict syntax parsing is opaque; semantic verification requires exact recomputation against the frozen specification and supplied observation. Declared properties remain `DECLARED_UNVERIFIED`, while checked byte spans establish only the bounded byte-difference witness.
+
 The API shall avoid embedding domain names such as checkpoint, candidate, or feature.
 
 ## 12. Vector format
