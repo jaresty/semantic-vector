@@ -13,89 +13,212 @@ import (
 	"sort"
 )
 
+// Version is the exact observation schema and identity-domain version.
 const Version = "semantic-vector-observation/v1"
 
+// ErrInvalid is the sentinel wrapped by typed observation validation issues.
 var ErrInvalid = errors.New("invalid observation specification")
 
+// Code classifies an observation validation issue.
 type Code string
 
 const (
-	CodeMissing    Code = "MISSING"
-	CodeInvalid    Code = "INVALID"
-	CodeDuplicate  Code = "DUPLICATE_IDENTITY"
-	CodeUnstable   Code = "UNSTABLE_CODEC"
+	// CodeMissing reports a required value that was not supplied.
+	CodeMissing Code = "MISSING"
+	// CodeInvalid reports a value that violates the observation contract.
+	CodeInvalid Code = "INVALID"
+	// CodeDuplicate reports a repeated identity.
+	CodeDuplicate Code = "DUPLICATE_IDENTITY"
+	// CodeUnstable reports a codec that does not reproduce canonical bytes.
+	CodeUnstable Code = "UNSTABLE_CODEC"
+	// CodeCodecPanic reports a contained codec panic.
 	CodeCodecPanic Code = "CODEC_PANIC"
-	CodeOverflow   Code = "OVERFLOW"
-	CodeMismatch   Code = "OBSERVATION_MISMATCH"
+	// CodeOverflow reports a configured size or work limit violation.
+	CodeOverflow Code = "OVERFLOW"
+	// CodeMismatch reports supplied evidence that does not bind to the specification.
+	CodeMismatch Code = "OBSERVATION_MISMATCH"
 )
 
+// Issue describes one typed observation validation failure.
 type Issue struct {
-	Code            Code `json:"code"`
-	Surface, Detail string
+	// Code classifies the failure.
+	Code Code `json:"code"`
+	// Surface identifies the rejected input surface.
+	Surface string
+	// Detail explains the rejection without granting evidence authority.
+	Detail string
 }
 
+// Error formats the typed issue.
 func (i Issue) Error() string { return fmt.Sprintf("%s surface=%q: %s", i.Code, i.Surface, i.Detail) }
+
+// Unwrap exposes ErrInvalid for errors.Is checks.
 func (i Issue) Unwrap() error { return ErrInvalid }
 
-type Limits struct{ MaxCanonicalBytes, MaxReportBytes, MaxRows, MaxWork int }
+// Limits bounds canonical bytes, report bytes, rows, and work.
+type Limits struct {
+	// MaxCanonicalBytes bounds each canonical input and frozen specification.
+	MaxCanonicalBytes int
+	// MaxReportBytes bounds a canonical report.
+	MaxReportBytes int
+	// MaxRows bounds specification rows and assessment batches.
+	MaxRows int
+	// MaxWork bounds validation and assessment work units.
+	MaxWork int
+}
 
+// DefaultLimits returns conservative library limits.
 func DefaultLimits() Limits { return Limits{64 << 10, 1 << 20, 1024, 10000} }
 
-type Codec[I any] interface{ Encode(I) ([]byte, error) }
-
-type Property struct{ ID, Statement, Source, Version string }
-type ByteSpan struct {
-	BeforeStart, BeforeEnd int
-	AfterStart, AfterEnd   int
+// Codec deterministically encodes an input as compact canonical JSON.
+type Codec[I any] interface {
+	// Encode returns compact canonical JSON for v.
+	Encode(v I) ([]byte, error)
 }
+
+// Property identifies a declared property and its source revision.
+type Property struct {
+	// ID is the property identity and must match its row identity.
+	ID string
+	// Statement is the declared property text.
+	Statement string
+	// Source identifies the property's external or local source.
+	Source string
+	// Version identifies the source revision.
+	Version string
+}
+
+// ByteSpan identifies corresponding changed byte ranges in two canonical inputs.
+type ByteSpan struct {
+	// BeforeStart and BeforeEnd delimit the changed range in the valid input.
+	BeforeStart, BeforeEnd int
+	// AfterStart and AfterEnd delimit the changed range in the violating input.
+	AfterStart, AfterEnd int
+}
+
+// Difference binds one declared property to canonical input digests and changed spans.
 type Difference struct {
-	PropertyID                string
+	// PropertyID identifies the property under comparison.
+	PropertyID string
+	// BeforeDigest and AfterDigest bind the valid and violating canonical inputs.
 	BeforeDigest, AfterDigest string
-	Claims                    []string
-	Spans                     []ByteSpan
-	PropertyStatus            string
+	// Claims contains the single declared controlled difference.
+	Claims []string
+	// Spans enumerate all changed canonical byte ranges.
+	Spans []ByteSpan
+	// PropertyStatus records the limited verification status of the property declaration.
+	PropertyStatus string
 }
 
 const (
-	PropertyDeclaredUnverified    = "DECLARED_UNVERIFIED"
+	// PropertyDeclaredUnverified marks a property as declared but not established by this library.
+	PropertyDeclaredUnverified = "DECLARED_UNVERIFIED"
+	// ByteDifferenceWitnessVerified marks only that the declared canonical byte difference was verified.
 	ByteDifferenceWitnessVerified = "BYTE_DIFFERENCE_WITNESS_VERIFIED"
 )
 
-type Outcome struct{ Output, FailureClass, Effects []byte }
-type Expected struct{ Valid, Violating Outcome }
-type ReviewEvidence struct{ Reviewer, Scope, Source, Revision string }
-type Oracle struct {
-	Kind, Source, Revision, Producer, Method string
-	Independence                             string
-	Verification                             string
-	Evidence                                 []ReviewEvidence
-}
-type EvidenceCeiling struct {
-	Version         string
-	CannotEstablish []string
-}
-type MutationIdentity struct {
-	ID, PropertyID string
-	Before, After  []byte
-}
-type Row[I any] struct {
-	ID         string
-	Property   Property
-	Violating  I
-	Difference Difference
-	Expected   Expected
-	Mutation   *MutationIdentity
+// Outcome is a canonical expected output, failure class, and effects tuple.
+type Outcome struct {
+	// Output is the canonical output bytes.
+	Output []byte
+	// FailureClass is the canonical failure classification bytes.
+	FailureClass []byte
+	// Effects is the canonical effects bytes; an empty non-nil value is explicit.
+	Effects []byte
 }
 
+// Expected pairs outcomes for the valid and violating inputs.
+type Expected struct {
+	// Valid is the expected outcome for the valid input.
+	Valid Outcome
+	// Violating is the expected outcome for the violating input.
+	Violating Outcome
+}
+
+// ReviewEvidence records externally supplied review provenance.
+type ReviewEvidence struct {
+	// Reviewer identifies the reviewer.
+	Reviewer string
+	// Scope identifies what the reviewer examined.
+	Scope string
+	// Source identifies the reviewed source.
+	Source string
+	// Revision identifies the reviewed source revision.
+	Revision string
+}
+
+// Oracle describes the provenance and review status of expected outcomes.
+type Oracle struct {
+	// Kind identifies the oracle category.
+	Kind string
+	// Source identifies the oracle source.
+	Source string
+	// Revision identifies the oracle source revision.
+	Revision string
+	// Producer identifies who produced the oracle.
+	Producer string
+	// Method identifies how the oracle was produced.
+	Method string
+	// Independence describes separation from the implementation under assessment.
+	Independence string
+	// Verification records the claimed review status without granting authority.
+	Verification string
+	// Evidence contains externally supplied review provenance.
+	Evidence []ReviewEvidence
+}
+
+// EvidenceCeiling declares claims that the supplied evidence cannot establish.
+type EvidenceCeiling struct {
+	// Version identifies the ceiling schema.
+	Version string
+	// CannotEstablish lists excluded claims, such as causality or production behavior.
+	CannotEstablish []string
+}
+
+// MutationIdentity binds an optional named mutation to one property's canonical worlds.
+type MutationIdentity struct {
+	// ID identifies the mutation.
+	ID string
+	// PropertyID identifies the property changed by the mutation.
+	PropertyID string
+	// Before and After are the canonical valid and violating inputs.
+	Before, After []byte
+}
+
+// Row defines one controlled valid-versus-violating comparison.
+type Row[I any] struct {
+	// ID is the row identity.
+	ID string
+	// Property is the declared property under comparison.
+	Property Property
+	// Violating is the typed violating input.
+	Violating I
+	// Difference declares the controlled canonical input difference.
+	Difference Difference
+	// Expected contains externally authored expected outcomes.
+	Expected Expected
+	// Mutation optionally binds a named mutation to the canonical inputs.
+	Mutation *MutationIdentity
+}
+
+// ObservationSpecification defines typed inputs, expected outcomes, provenance, and evidence limits.
 type ObservationSpecification[I any] struct {
-	Version         string
-	CodecKey        string
-	Codec           Codec[I]
-	Valid           I
-	Rows            []Row[I]
-	Oracle          Oracle
+	// Version must equal Version.
+	Version string
+	// CodecKey identifies the canonical codec.
+	CodecKey string
+	// Codec encodes typed inputs as compact canonical JSON.
+	Codec Codec[I]
+	// Valid is the typed valid input.
+	Valid I
+	// Rows are strictly identity-ordered controlled comparisons.
+	Rows []Row[I]
+	// Oracle records externally supplied expected-outcome provenance.
+	Oracle Oracle
+	// EvidenceCeiling limits what assessment may claim.
 	EvidenceCeiling EvidenceCeiling
-	Limits          Limits
+	// Limits bounds freezing and assessment.
+	Limits Limits
 }
 
 type frozenRow struct {
@@ -115,13 +238,18 @@ type frozenWire struct {
 	EvidenceCeiling EvidenceCeiling `json:"evidence_ceiling"`
 	Limits          Limits          `json:"limits"`
 }
+
+// FrozenObservationSpecification is an immutable canonical specification bound to an identity.
 type FrozenObservationSpecification struct {
 	wire      frozenWire
 	canonical []byte
 	identity  string
 }
 
+// Identity returns the frozen specification identity.
 func (f FrozenObservationSpecification) Identity() string { return f.identity }
+
+// Canonical returns a copy of the frozen specification's canonical bytes.
 func (f FrozenObservationSpecification) Canonical() []byte {
 	return append([]byte(nil), f.canonical...)
 }
@@ -219,6 +347,9 @@ func outcomeComplete(o Outcome) bool {
 	return o.Output != nil && o.FailureClass != nil && o.Effects != nil
 }
 
+// FreezeObservationSpecification validates, canonicalizes, and defensively copies s.
+// It binds declared expectations and provenance but does not execute the subject
+// or establish causality, production behavior, or authority.
 func FreezeObservationSpecification[I any](s ObservationSpecification[I]) (FrozenObservationSpecification, error) {
 	if s.Version != Version {
 		return FrozenObservationSpecification{}, Issue{Code: CodeInvalid, Surface: "version", Detail: "exact observation version required"}
@@ -309,41 +440,72 @@ func FreezeObservationSpecification[I any](s ObservationSpecification[I]) (Froze
 	return FrozenObservationSpecification{w, canonical, digest(append([]byte(Version+"\x00"), canonical...))}, nil
 }
 
+// ObservedOutcome is one externally supplied observed outcome tuple.
 type ObservedOutcome struct {
+	// Output, FailureClass, and Effects are externally supplied canonical values.
 	Output, FailureClass, Effects []byte `json:",omitempty"`
 }
+
+// ObservedRow is one externally supplied observation of a specification row.
 type ObservedRow struct {
-	ID                               string `json:"id"`
-	ViolatingInput                   []byte `json:"violating_input"`
-	Valid, Violating                 ObservedOutcome
+	// ID identifies the observed row.
+	ID string `json:"id"`
+	// ViolatingInput is the externally supplied canonical violating input.
+	ViolatingInput []byte `json:"violating_input"`
+	// Valid and Violating are externally supplied outcomes for the two worlds.
+	Valid, Violating ObservedOutcome
+	// ReceiptDigest and ReceiptProvenance identify optional external custody evidence.
 	ReceiptDigest, ReceiptProvenance string
 }
+
+// ExternalObservation contains caller-supplied evidence held in external custody.
+// Supplying it does not establish execution causality, production behavior, or authority.
 type ExternalObservation struct {
+	// Version and SpecificationIdentity bind the observation to a frozen specification.
 	Version, SpecificationIdentity string
-	ValidInput                     []byte
-	Rows                           []ObservedRow
+	// ValidInput is the externally supplied canonical valid input.
+	ValidInput []byte
+	// Rows are the externally supplied row observations.
+	Rows []ObservedRow
 }
 
+// Classification describes how supplied evidence compares with a frozen specification.
 type Classification string
 
 const (
-	SpecInvalid                                 Classification = "SPEC_INVALID"
-	ObservationMalformed                        Classification = "OBSERVATION_MALFORMED"
-	ObservationMismatch                         Classification = "OBSERVATION_MISMATCH"
+	// SpecInvalid indicates an invalid frozen specification.
+	SpecInvalid Classification = "SPEC_INVALID"
+	// ObservationMalformed indicates malformed caller-supplied evidence.
+	ObservationMalformed Classification = "OBSERVATION_MALFORMED"
+	// ObservationMismatch indicates evidence that does not bind or match.
+	ObservationMismatch Classification = "OBSERVATION_MISMATCH"
+	// SuppliedOutcomesMatchQualifiedSpecification indicates a canonical match to qualified declarations, not causal proof.
 	SuppliedOutcomesMatchQualifiedSpecification Classification = "SUPPLIED_OUTCOMES_MATCH_QUALIFIED_SPECIFICATION"
-	NonDiscriminating                           Classification = "NON_DISCRIMINATING"
-	Unqualified                                 Classification = "UNQUALIFIED"
+	// NonDiscriminating indicates equal supplied outcomes for valid and violating inputs.
+	NonDiscriminating Classification = "NON_DISCRIMINATING"
+	// Unqualified indicates matching supplied outcomes whose oracle lacks qualification.
+	Unqualified Classification = "UNQUALIFIED"
 )
 
+// Report is a deterministic assessment of externally supplied evidence.
+// It records external custody and noncausality and grants no acceptance authority.
 type Report struct {
-	Version, Identity, SpecificationIdentity              string
-	Classification                                        Classification
+	// Version, Identity, and SpecificationIdentity bind the report schema and inputs.
+	Version, Identity, SpecificationIdentity string
+	// Classification states the bounded comparison result.
+	Classification Classification
+	// ExecutionCustody, ObservationBinding, and CausalExecution state custody and binding limits.
 	ExecutionCustody, ObservationBinding, CausalExecution string
-	DifferenceWitness                                     string
-	Authority                                             int
-	Accepted                                              bool
-	OracleStatus                                          string
-	Findings                                              []Issue
+	// DifferenceWitness states the verified canonical-difference status.
+	DifferenceWitness string
+	// Authority is always zero; the report grants no decision authority.
+	Authority int
+	// Accepted is always false; assessment is not acceptance.
+	Accepted bool
+	// OracleStatus repeats the frozen oracle's claimed review status.
+	OracleStatus string
+	// Findings contains typed bounded assessment issues.
+	Findings []Issue
 }
 
 func same(a ObservedOutcome, b Outcome) bool {
@@ -417,6 +579,9 @@ func finish(r Report, l Limits) (Report, error) {
 	}
 	return r, nil
 }
+
+// AssessObservation compares one externally supplied observation with f.
+// It performs no subject execution and returns no causal or acceptance authority.
 func AssessObservation(f FrozenObservationSpecification, o ExternalObservation) (Report, error) {
 	work, ok := checkedAdd(len(f.wire.Rows), 1)
 	if !ok || work > f.wire.Limits.MaxWork {
@@ -424,6 +589,9 @@ func AssessObservation(f FrozenObservationSpecification, o ExternalObservation) 
 	}
 	return assess(f, o)
 }
+
+// AssessObservationBatch assesses externally supplied observations within f's limits.
+// Each result retains external custody, noncausality, and zero authority.
 func AssessObservationBatch(f FrozenObservationSpecification, observations []ExternalObservation) ([]Report, error) {
 	if observations == nil {
 		return nil, Issue{Code: CodeMissing, Surface: "observations", Detail: "nil batch"}
@@ -445,6 +613,8 @@ func AssessObservationBatch(f FrozenObservationSpecification, observations []Ext
 	}
 	return out, nil
 }
+
+// Canonical returns the report's canonical JSON bytes.
 func (r Report) Canonical() ([]byte, error) {
 	b, e := json.Marshal(r)
 	if e != nil {
@@ -453,6 +623,7 @@ func (r Report) Canonical() ([]byte, error) {
 	return b, nil
 }
 
+// SyntaxCheckedReport records syntax validation only and exposes no semantic report.
 type SyntaxCheckedReport struct{ raw []byte }
 
 // ParseReportSyntax validates only the strict canonical JSON grammar. It returns

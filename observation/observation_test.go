@@ -2,6 +2,8 @@ package observation
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -58,6 +60,47 @@ func good(t *testing.T) (ObservationSpecification[input], ExternalObservation) {
 	}
 	o := ExternalObservation{Version: Version, SpecificationIdentity: f.Identity(), ValidInput: clone(vb), Rows: []ObservedRow{{ID: "deny-x", ViolatingInput: clone(xb), Valid: ObservedOutcome{valid.Output, valid.FailureClass, valid.Effects}, Violating: ObservedOutcome{bad.Output, bad.FailureClass, bad.Effects}, ReceiptDigest: h([]byte("receipt")), ReceiptProvenance: "go test"}}}
 	return s, o
+}
+
+// TestGenericCanonicalReportGolden pins the library's generic report schema.
+// The separate external 24-row evidence and its identity remain external.
+func TestGenericCanonicalReportGolden(t *testing.T) {
+	const (
+		wantLength   = 541
+		wantSHA256   = "sha256:710c63dc9a18b20cfd82656ab2e58d2987809e538c83e71f1f2b3b00ae70360c"
+		wantIdentity = "sha256:687bc3543dc5e97df46a515c6febed276df856fd964aee8f8c97fc0a2684a2b2"
+	)
+
+	for reconstruction := 0; reconstruction < 3; reconstruction++ {
+		s, o := good(t)
+		f, err := FreezeObservationSpecification(s)
+		if err != nil {
+			t.Fatalf("reconstruction %d freeze: %v", reconstruction, err)
+		}
+		report, err := AssessObservation(f, o)
+		if err != nil {
+			t.Fatalf("reconstruction %d assess: %v", reconstruction, err)
+		}
+		canonical, err := report.Canonical()
+		if err != nil {
+			t.Fatalf("reconstruction %d canonical: %v", reconstruction, err)
+		}
+		sum := sha256.Sum256(canonical)
+		gotSHA256 := "sha256:" + hex.EncodeToString(sum[:])
+		if len(canonical) != wantLength || gotSHA256 != wantSHA256 || report.Identity != wantIdentity {
+			t.Fatalf("reconstruction %d golden: length=%d sha256=%s identity=%s", reconstruction, len(canonical), gotSHA256, report.Identity)
+		}
+		if _, err := ParseReportSyntax(canonical, len(canonical)); err != nil {
+			t.Fatalf("reconstruction %d syntax: %v", reconstruction, err)
+		}
+		verified, err := VerifyReport(f, o, canonical)
+		if err != nil {
+			t.Fatalf("reconstruction %d verify: %v", reconstruction, err)
+		}
+		if verified.Identity != wantIdentity {
+			t.Fatalf("reconstruction %d verified identity=%s", reconstruction, verified.Identity)
+		}
+	}
 }
 
 func TestFreezeAndAssessExternalCustodyDeterministic(t *testing.T) {
