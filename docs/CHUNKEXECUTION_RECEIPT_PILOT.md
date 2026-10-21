@@ -17,14 +17,16 @@ At that revision, the strict test establishes the baseline used here: 6 parser c
 
 The pilot's sequence is deliberately one-way:
 
-1. the subject fixture produces copied canonical receipt bytes, copied outcomes, and subject counters;
-2. capture rejects a value not marked produced and then clones the produced bytes;
-3. the captured/observed subject counters remain exactly 6 parser, 20 validator, and 19 mutation calls;
-4. receipt parser, validator, and mutation counters remain exactly 0, 0, and 0;
-5. `observation.AssessObservation` creates a report from the frozen specification and inert external observation;
-6. `observation.VerifyReport` verifies canonical-equal report bytes without any producer callback surface.
+1. the subject fixture supplies copied canonical receipt bytes, copied outcomes, and subject counters that stand for already-produced values;
+2. a direct test proves capture rejects an input not marked produced;
+3. capture clones the produced receipt and outcome bytes;
+4. after capture, the test snapshots expected bytes, mutates every original produced receipt and outcome slice, and proves the captured values, frozen specification, and external observation remain unchanged;
+5. the captured/observed subject counters remain exactly 6 parser, 20 validator, and 19 mutation calls;
+6. receipt parser, validator, and mutation counters remain exactly 0, 0, and 0;
+7. `observation.AssessObservation` creates a report from the frozen specification and inert external observation;
+8. canonical positive and changed-authority-byte negative verification still behave as expected after the original produced slices are mutated.
 
-The test records one producer call before capture and asserts that the count is unchanged after `VerifyReport`. This is a bounded API observation: the published verification function accepts only a frozen specification, an external observation, and report bytes; it has no producer callback parameter.
+The no-callback statement is structural API evidence, not a runtime counter proof: the published `observation.VerifyReport` function accepts a frozen specification, an external observation, and report bytes. It has no producer callback input. The pilot therefore supplies only already-produced copied values and makes no claim that an inert counter can prove whether replay occurred.
 
 The positive case verifies exact canonical report bytes. The negative case changes only the canonical report's authority byte from `0` to `1` and requires verification to reject it. A successful verified report must retain the API's exact vocabulary and limits:
 
@@ -42,7 +44,7 @@ Before the final commit, the expected parser count is temporarily perturbed from
 Two benchmarks are included:
 
 - `BenchmarkChunkExecutionStrictSubjectBaseline` measures construction and checking of the pinned strict-subject fixture;
-- `BenchmarkChunkExecutionObservedCopiedReceipt` measures copied capture, observation assessment, canonicalization, positive verification, negative authority-byte verification, and counter checks.
+- `BenchmarkChunkExecutionObservedCopiedReceipt` measures copied capture, alias-independence checks, observation assessment, canonicalization, positive verification, negative authority-byte verification, and counter checks.
 
 Every benchmark iteration executes correctness guards. Benchmark results are descriptive measurements of this disposable fixture on the reporting machine only. They do not establish comparative significance, production performance, performance causality, or a stable overhead ratio.
 
@@ -59,4 +61,4 @@ This pilot does **not** establish:
 - production behavior or production readiness; or
 - lsp-trace correctness.
 
-It also does not authenticate provenance merely because provenance strings are present. semantic-vector verifies canonical byte relationships and report recomputation within its published evidence ceiling. Ordinary lsp-trace tests remain the sole oracle for lsp-trace behavior and correctness.
+It also does not authenticate provenance merely because provenance strings are present. The absence of a producer callback input in `VerifyReport` is structural API evidence only; it is not runtime evidence that a producer was or was not replayed elsewhere. semantic-vector verifies canonical byte relationships and report recomputation within its published evidence ceiling. Ordinary lsp-trace tests remain the sole oracle for lsp-trace behavior and correctness.

@@ -39,7 +39,6 @@ type producedChunkExecution struct {
 	validOutcome     observation.Outcome
 	violatingOutcome observation.Outcome
 	subject          pilotCounters
-	producerCalls    int
 	produced         bool
 }
 
@@ -66,9 +65,8 @@ func produceStrictChunkExecution(expected pilotCounters) (producedChunkExecution
 			FailureClass: []byte(`"authority_changed"`),
 			Effects:      []byte(`[]`),
 		},
-		subject:       pilotCounters{Parser: 6, Validator: 20, Mutation: 19},
-		producerCalls: 1,
-		produced:      true,
+		subject:  pilotCounters{Parser: 6, Validator: 20, Mutation: 19},
+		produced: true,
 	}
 	if produced.subject != expected {
 		return producedChunkExecution{}, fmt.Errorf("strict subject counters: got %+v want %+v", produced.subject, expected)
@@ -96,6 +94,52 @@ func captureProducedChunkExecution(produced producedChunkExecution) (capturedChu
 		subject: produced.subject,
 		receipt: pilotCounters{},
 	}, nil
+}
+
+func cloneCapturedChunkExecution(captured capturedChunkExecution) capturedChunkExecution {
+	return capturedChunkExecution{
+		validReceipt:     bytes.Clone(captured.validReceipt),
+		violatingReceipt: bytes.Clone(captured.violatingReceipt),
+		validOutcome: observation.ObservedOutcome{
+			Output:       bytes.Clone(captured.validOutcome.Output),
+			FailureClass: bytes.Clone(captured.validOutcome.FailureClass),
+			Effects:      bytes.Clone(captured.validOutcome.Effects),
+		},
+		violatingOutcome: observation.ObservedOutcome{
+			Output:       bytes.Clone(captured.violatingOutcome.Output),
+			FailureClass: bytes.Clone(captured.violatingOutcome.FailureClass),
+			Effects:      bytes.Clone(captured.violatingOutcome.Effects),
+		},
+		subject: captured.subject,
+		receipt: captured.receipt,
+	}
+}
+
+func mutateOriginalProducedSlices(produced *producedChunkExecution) {
+	for _, data := range [][]byte{
+		produced.validReceipt,
+		produced.violatingReceipt,
+		produced.validOutcome.Output,
+		produced.validOutcome.FailureClass,
+		produced.validOutcome.Effects,
+		produced.violatingOutcome.Output,
+		produced.violatingOutcome.FailureClass,
+		produced.violatingOutcome.Effects,
+	} {
+		data[0] ^= 1
+	}
+}
+
+func equalCapturedChunkExecution(a, b capturedChunkExecution) bool {
+	return bytes.Equal(a.validReceipt, b.validReceipt) &&
+		bytes.Equal(a.violatingReceipt, b.violatingReceipt) &&
+		bytes.Equal(a.validOutcome.Output, b.validOutcome.Output) &&
+		bytes.Equal(a.validOutcome.FailureClass, b.validOutcome.FailureClass) &&
+		bytes.Equal(a.validOutcome.Effects, b.validOutcome.Effects) &&
+		bytes.Equal(a.violatingOutcome.Output, b.violatingOutcome.Output) &&
+		bytes.Equal(a.violatingOutcome.FailureClass, b.violatingOutcome.FailureClass) &&
+		bytes.Equal(a.violatingOutcome.Effects, b.violatingOutcome.Effects) &&
+		a.subject == b.subject && a.receipt == b.receipt
 }
 
 func pilotDigest(data []byte) string {
@@ -209,7 +253,40 @@ func runObservedChunkExecutionPilot(t testing.TB) {
 	}
 	requirePilotCounters(t, captured)
 
+	capturedSnapshot := cloneCapturedChunkExecution(captured)
 	frozen, external := freezeChunkExecutionPilot(t, captured)
+	frozenSnapshot := bytes.Clone(frozen.Canonical())
+	externalValidInputSnapshot := bytes.Clone(external.ValidInput)
+	externalViolatingInputSnapshot := bytes.Clone(external.Rows[0].ViolatingInput)
+	externalValidOutcomeSnapshot := observation.ObservedOutcome{
+		Output:       bytes.Clone(external.Rows[0].Valid.Output),
+		FailureClass: bytes.Clone(external.Rows[0].Valid.FailureClass),
+		Effects:      bytes.Clone(external.Rows[0].Valid.Effects),
+	}
+	externalViolatingOutcomeSnapshot := observation.ObservedOutcome{
+		Output:       bytes.Clone(external.Rows[0].Violating.Output),
+		FailureClass: bytes.Clone(external.Rows[0].Violating.FailureClass),
+		Effects:      bytes.Clone(external.Rows[0].Violating.Effects),
+	}
+
+	mutateOriginalProducedSlices(&produced)
+	if !equalCapturedChunkExecution(captured, capturedSnapshot) {
+		t.Fatal("captured receipt or outcome changed after original produced slices mutated")
+	}
+	if !bytes.Equal(frozen.Canonical(), frozenSnapshot) {
+		t.Fatal("frozen specification changed after original produced slices mutated")
+	}
+	if !bytes.Equal(external.ValidInput, externalValidInputSnapshot) ||
+		!bytes.Equal(external.Rows[0].ViolatingInput, externalViolatingInputSnapshot) ||
+		!bytes.Equal(external.Rows[0].Valid.Output, externalValidOutcomeSnapshot.Output) ||
+		!bytes.Equal(external.Rows[0].Valid.FailureClass, externalValidOutcomeSnapshot.FailureClass) ||
+		!bytes.Equal(external.Rows[0].Valid.Effects, externalValidOutcomeSnapshot.Effects) ||
+		!bytes.Equal(external.Rows[0].Violating.Output, externalViolatingOutcomeSnapshot.Output) ||
+		!bytes.Equal(external.Rows[0].Violating.FailureClass, externalViolatingOutcomeSnapshot.FailureClass) ||
+		!bytes.Equal(external.Rows[0].Violating.Effects, externalViolatingOutcomeSnapshot.Effects) {
+		t.Fatal("external observation changed after original produced slices mutated")
+	}
+
 	report, err := observation.AssessObservation(frozen, external)
 	if err != nil {
 		t.Fatalf("assess copied receipt: %v", err)
@@ -218,13 +295,9 @@ func runObservedChunkExecutionPilot(t testing.TB) {
 	if err != nil {
 		t.Fatalf("canonical report: %v", err)
 	}
-	producerCallsBeforeVerify := produced.producerCalls
 	verified, err := observation.VerifyReport(frozen, external, canonical)
 	if err != nil {
 		t.Fatalf("verify canonical-equal report: %v", err)
-	}
-	if produced.producerCalls != producerCallsBeforeVerify {
-		t.Fatalf("VerifyReport invoked producer: before=%d after=%d", producerCallsBeforeVerify, produced.producerCalls)
 	}
 	if verified.Authority != 0 || verified.Accepted || verified.ExecutionCustody != "EXTERNAL" || verified.CausalExecution != "NOT_OBSERVED" {
 		t.Fatalf("report limits: authority=%d accepted=%t custody=%s causal=%s", verified.Authority, verified.Accepted, verified.ExecutionCustody, verified.CausalExecution)
@@ -240,6 +313,12 @@ func runObservedChunkExecutionPilot(t testing.TB) {
 	requirePilotCounters(t, captured)
 }
 
+func TestChunkExecutionCaptureRejectsUnproduced(t *testing.T) {
+	if _, err := captureProducedChunkExecution(producedChunkExecution{}); err == nil || err.Error() != "capture before subject production" {
+		t.Fatalf("unproduced capture: %v", err)
+	}
+}
+
 func TestChunkExecutionObservationReceiptPilot(t *testing.T) {
 	runObservedChunkExecutionPilot(t)
 }
@@ -251,8 +330,8 @@ func BenchmarkChunkExecutionStrictSubjectBaseline(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if !produced.produced || produced.subject != want || produced.producerCalls != 1 {
-			b.Fatalf("baseline guard: produced=%t subject=%+v producer_calls=%d", produced.produced, produced.subject, produced.producerCalls)
+		if !produced.produced || produced.subject != want {
+			b.Fatalf("baseline guard: produced=%t subject=%+v", produced.produced, produced.subject)
 		}
 	}
 }
